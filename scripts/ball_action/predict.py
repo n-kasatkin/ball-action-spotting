@@ -1,15 +1,14 @@
 import argparse
 from pathlib import Path
 
-from tqdm import tqdm
 import numpy as np
+from tqdm import tqdm
 
-from src.ball_action.annotations import raw_predictions_to_actions, prepare_game_spotting_results
-from src.utils import get_best_model_path, get_video_info
-from src.predictors import MultiDimStackerPredictor
-from src.frame_fetchers import NvDecFrameFetcher
 from src.ball_action import constants
-
+from src.ball_action.annotations import raw_predictions_to_actions, prepare_game_spotting_results
+from src.frame_fetchers import NvDecFrameFetcher
+from src.predictors import MultiDimStackerPredictor
+from src.utils import get_best_model_path, get_video_info
 
 RESOLUTION = "720p"
 INDEX_SAVE_ZONE = 1
@@ -24,6 +23,38 @@ def parse_arguments():
     parser.add_argument("--challenge", action="store_true")
     parser.add_argument("--use_saved_predictions", action="store_true")
     return parser.parse_args()
+
+
+def get_video_predictions(
+        predictor: MultiDimStackerPredictor,
+        video_path: Path,
+        save_dir: Path,
+        use_saved_predictions: str = False,
+):
+    video_info = get_video_info(video_path)
+    print("Video info:", video_info)
+    assert video_info["fps"] == constants.video_fps
+
+    raw_predictions_path = save_dir / f"{video_path.stem}_raw_predictions.npz"
+
+    if use_saved_predictions:
+        with np.load(str(raw_predictions_path)) as raw_predictions:
+            frame_indexes = raw_predictions["frame_indexes"]
+            raw_predictions = raw_predictions["raw_predictions"]
+    else:
+        print("Predict video:", video_path)
+        frame_indexes, raw_predictions = get_raw_predictions(
+            predictor, video_path, video_info["frame_count"]
+        )
+        np.savez(
+            raw_predictions_path,
+            frame_indexes=frame_indexes,
+            raw_predictions=raw_predictions,
+        )
+        print("Raw predictions saved to", raw_predictions_path)
+
+    class2actions = raw_predictions_to_actions(frame_indexes, raw_predictions)
+    return class2actions
 
 
 def get_raw_predictions(predictor: MultiDimStackerPredictor,
@@ -131,11 +162,27 @@ def predict_fold(experiment: str, fold: int, gpu_id: int,
 if __name__ == "__main__":
     args = parse_arguments()
 
-    if args.folds == "all":
-        folds = constants.folds
-    else:
-        folds = [int(fold) for fold in args.folds.split(",")]
+    # if args.folds == "all":
+    #     folds = constants.folds
+    # else:
+    #     folds = [int(fold) for fold in args.folds.split(",")]
+    #
+    # for fold in folds:
+    #     predict_fold(args.experiment, fold, args.gpu_id,
+    #                  args.challenge, args.use_saved_predictions)
 
-    for fold in folds:
-        predict_fold(args.experiment, fold, args.gpu_id,
-                     args.challenge, args.use_saved_predictions)
+    model_path = Path("")
+    video_path = Path("")
+    save_dir = Path("")
+
+    predictor = MultiDimStackerPredictor(
+        model_path, device=f"cuda:0", tta=True
+    )
+
+    events = get_video_predictions(
+        predictor,
+        video_path,
+        save_dir,
+    )
+
+    print(events)
